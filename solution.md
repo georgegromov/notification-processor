@@ -1,0 +1,234 @@
+# Solution
+
+## Idea
+
+**notification-processor** — система, которая слушает события пользовательских действий, решает
+кому и куда отправить уведомление, и доводит его до доставки с повторами при сбоях.
+
+Система состоит из **2 микросервисов**:
+
+| Сервис | Задача |
+|--------|--------|
+| `notification-ingestor` | Принять событие, понять какие каналы нужны, сохранить задачи на отправку |
+| `notification-dispatcher` | Взять задачи из очереди и отправить по email / push / sms |
+
+Между сервисами нет прямых вызовов — только общая БД. Ingestor создаёт задачи, dispatcher их
+выполняет.
+
+### Как идут данные
+
+```
+Событие (Kafka)
+    → Ingestor: проверить, определить каналы, сохранить
+    → БД: задачи на отправку (pending)
+    → Dispatcher: взять задачу → отправить → обновить статус
+    → Лог: user_id, event_id, channel
+```
+
+### Что делает каждый сервис
+
+**Ingestor**
+
+1. Читает событие из Kafka.
+2. Проверяет формат. Битое сообщение — в DLQ, дальше обрабатывает следующие.
+3. Смотрит `event_type` и выбирает каналы:
+   - `order_created` → email + push
+   - `payment_received` → email
+   - `order_shipped` → push + sms
+4. Сохраняет в БД: «событие обработано» + список уведомлений со статусом `pending`.
+5. Подтверждает чтение из Kafka.
+
+**Dispatcher**
+
+1. Периодически читает из БД задачи со статусом `pending`.
+2. Берёт задачу, меняет статус на `processing`.
+3. Вызывает нужный канал (email / push / sms) — в демо это лог.
+4. По результату:
+   - успех → `sent`
+   - временная ошибка → повтор (до 3 раз, с задержкой)
+   - постоянная ошибка → `failed`, больше не пробуем
+
+Email, push и sms работают **независимо**: если sms недоступен, email и push продолжают
+отправляться. Ingestor при этом тоже не останавливается.
+
+## Architecture
+
+**Паттерны:** Bulkhead, Circuit Breaker, Retry+jitter, DLQ, Graceful Shutdown.
+
+### High Level Design
+
+```mermaid
+flowchart LR
+  K[Kafka] --> I
+
+  subgraph Ingestor["notification-ingestor"]
+    I[Ingestor]
+  end
+
+  I -->|poison| DLQ[DLQ]
+  I --> PG[(Postgres)]
+  I -->|commit offset| K
+
+  subgraph Dispatcher["notification-dispatcher"]
+    E[Email]
+    P[Push]
+    S[SMS]
+  end
+
+  PG --> E
+  PG --> P
+  PG --> S
+  E --> G[Доставка]
+  P --> G
+  S --> G
+```
+
+### Границы сервисов
+
+| # | Сервис | Владеет | Не делает |
+|---|--------|---------|-----------|
+| 1 | `notification-ingestor` | чтение Kafka, валидация, routing, запись в БД, DLQ | отправка, retry |
+| 2 | `notification-dispatcher` | чтение очереди, отправка по каналам, retry, circuit breaker | чтение Kafka, дедуп |
+
+Kafka, Postgres, DLQ — инфраструктура, не сервисы.
+
+Демо: `go run ./cmd/ingestor`, `go run ./cmd/dispatcher`.
+
+### Low Level Design
+
+```mermaid
+flowchart TB
+  K[Kafka] --> C[Consumer]
+  C --> R[Router]
+  R -->|битый JSON| DLQ[DLQ]
+  R -->|TX| IB[(processed_events)]
+  R --> OB[(notifications)]
+  C -->|commit| K
+
+  OB --> DE[Email workers]
+  OB --> DP[Push workers]
+  OB --> DS[SMS workers]
+
+  DE --> SE[Sender]
+  DP --> SP[Sender]
+  DS --> SS[Sender]
+```
+
+```mermaid
+sequenceDiagram
+  participant K as Kafka
+  participant I as Ingestor
+  participant DB as Postgres
+  participant D as Dispatcher
+  participant G as Sender
+
+  K->>I: событие
+  alt битый JSON
+    I->>I: DLQ
+  else ok
+    I->>DB: сохранить событие + задачи
+  end
+  I->>K: подтвердить чтение
+
+  DB->>D: взять pending
+  D->>G: Send
+  alt ok
+    D->>DB: sent
+  else retry
+    D->>DB: pending + backoff
+  else fail
+    D->>DB: failed
+  end
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending
+  pending --> processing: взять задачу
+  processing --> sent: ok
+  processing --> pending: временная ошибка
+  processing --> failed: постоянная / 3 попытки
+```
+
+## Нюансы реализации
+
+### Exactly-once и дедупликация
+
+Событие из Kafka может прийти повторно (рестарт, сбой). Чтобы не отправить уведомление дважды:
+
+1. Ingestor перед созданием задач проверяет `event_id` в таблице **Inbox** (`processed_events`).
+2. Если событие уже есть — пропускаем, дубликат не создаём.
+3. Новое событие + задачи на отправку пишутся **в одной транзакции**.
+4. Только после успешной записи в БД — подтверждаем чтение из Kafka.
+
+Падение между записью в БД и подтверждением Kafka → событие придёт снова → Inbox отсечёт
+дубликат. Сообщение не теряется и не дублируется.
+
+### Inbox и Outbox
+
+Две таблицы в Postgres:
+
+**Inbox** (`processed_events`) — какие события уже обработаны.
+
+```sql
+event_id UUID PRIMARY KEY
+user_id, event_type, created_at
+```
+
+**Outbox** (`notifications`) — очередь задач на отправку.
+
+```sql
+event_id, user_id, channel          -- email | push | sms
+status                              -- pending | processing | sent | failed
+attempts, next_retry_at, last_error
+UNIQUE (event_id, channel)          -- одно уведомление на канал
+```
+
+Ingestor пишет в обе таблицы. Dispatcher только читает и обновляет Outbox.
+
+### Отправка уведомлений
+
+Dispatcher берёт задачи из Outbox (`status = pending`, `next_retry_at <= now()`), по одной на
+канал. Несколько воркеров работают параллельно — каждый берёт свою задачу, не блокируя
+остальных (`FOR UPDATE SKIP LOCKED`).
+
+Отправка — вызов `Sender` с таймаутом. В демо Sender пишет лог и эмулирует сбои:
+
+- 10% — временная ошибка → retry с backoff (100ms → 200ms → 400ms), макс. 3 попытки
+- 1% — постоянная ошибка → `failed` сразу
+
+На каждый канал — свой circuit breaker: если канал массово падает, dispatcher временно
+перестаёт его дергать, остальные каналы работают.
+
+### Как избегаем bottlenecks
+
+| Проблема | Решение |
+|----------|---------|
+| SMS завис — всё встало | Ingestor и dispatcher разделены. Send не в consumer. Каналы изолированы (bulkhead) |
+| Ретраи копятся в памяти | Retry в БД (`attempts`, `next_retry_at`), не в горутинах. Пул воркеров фиксированный |
+| Воркеры блокируют друг друга | `SKIP LOCKED` — каждый берёт свою строку, без общего mutex |
+| Битый JSON стопит поток | Poison pill → DLQ, offset коммитится, следующие сообщения идут |
+| Процесс убили на `processing` | Lease: через N секунд задача снова `pending` |
+| Graceful shutdown | Ingestor: дождаться TX → commit. Dispatcher: дождаться in-flight Send (~15s) |
+
+### Каркас репозитория
+
+```
+cmd/ingestor/main.go
+cmd/dispatcher/main.go
+internal/ingest/
+internal/outbox/
+internal/channel/
+internal/kafka/
+internal/store/
+deploy/docker-compose.yml
+scripts/produce.go
+```
+
+### Тестовые данные для демо
+
+1. Три `event_type` → нужные каналы в логах.
+2. Дубль `event_id` → повторной отправки нет.
+3. Битый JSON → DLQ, остальные сообщения обрабатываются.
+4. SIGTERM → после рестарта нет дублей, `pending` доезжают.
+5. SMS «лежит» → email и push продолжают работать.
