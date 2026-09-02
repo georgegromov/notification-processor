@@ -6,20 +6,19 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-type service struct {
+type Service struct {
 	validate *validator.Validate
 }
 
-func NewService() *service {
-
+func NewService() *Service {
 	opts := []validator.Option{
 		validator.WithRequiredStructEnabled(),
 	}
 
 	v := validator.New(opts...)
-	return &service{validate: v}
+	return &Service{validate: v}
 }
 
-func (v *service) Validate(ctx context.Context, s any) error {
+func (v *Service) Validate(ctx context.Context, s any) error {
 	return v.validate.StructCtx(ctx, s)
 }

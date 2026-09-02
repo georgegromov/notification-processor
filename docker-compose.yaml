@@ -1,7 +1,105 @@
 name: notification-processor
 
 volumes:
-
+  pg_data:
+ 
 networks:
+  notification-processor-network:
+    driver: bridge
 
 services:
+  # PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: notification_processor
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - notification-processor-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_processor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  # Zookeeper
+  kafka-zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: kafka-zookeeper
+    ports:
+      - "${ZOOKEEPER_CLIENT_PORT}:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
+      ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
+    networks:
+      - notification-processor-network
+    healthcheck:
+      test: ["CMD", "cub", "zk-ready", "localhost:2181", "30"]
+      interval: 10s
+      timeout: 30s
+      retries: 10
+      start_period: 30s
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      kafka-zookeeper:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_PORT}:9092"
+    environment:
+      KAFKA_BROKER_ID: ${KAFKA_BROKER_ID}
+      KAFKA_ZOOKEEPER_CONNECT: kafka-zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
+      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
+      KAFKA_LISTENERS: ${KAFKA_LISTENERS}
+      KAFKA_INTER_BROKER_LISTENER_NAME: ${KAFKA_INTER_BROKER_LISTENER_NAME}
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR}
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR}
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: ${KAFKA_AUTO_CREATE_TOPICS_ENABLE}
+    networks:
+      - notification-processor-network
+    healthcheck:
+      test: ["CMD", "cub", "kafka-ready", "1", "30", "-b", "localhost:9092"]
+      interval: 15s
+      timeout: 30s
+      retries: 10
+      start_period: 30s
+
+  # Kafka UI
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ${KAFKA_UI_CLUSTERS_0_NAME}
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_UI_CLUSTERS_0_BOOTSTRAPSERVERS}
+    networks:
+      - notification-processor-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+  
+  # Service Discovery
+  consul:
+    image: hashicorp/consul:1.20
+    container_name: consul
+    command: agent -dev -ui -client=0.0.0.0
+    ports:
+      - "8500:8500"
+
+  # Notification Ingestion Service
+  notification-ingestion-service:
+
+  # Notification Dispatch Service
+  notification-dispatch-service:
+    

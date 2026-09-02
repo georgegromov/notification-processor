@@ -8,7 +8,7 @@
 ```json
 {
   "event_id": "uuid",
-  "user_id": 12345,
+  "user_id": "uuid",
   "event_type": "order_created|payment_received|order_shipped", // будет 1 из 3-х кодов
   "timestamp": "RFC3339",
   "payload": {
