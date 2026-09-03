@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS processed_events (
 CREATE TABLE IF NOT EXISTS notifications (
 	id BIGSERIAL PRIMARY KEY,
 	event_id UUID NOT NULL,
-	user_id BIGINT NOT NULL,
+	user_id UUID NOT NULL,
 	channel TEXT NOT NULL,
 	status TEXT NOT NULL DEFAULT 'pending',
 	attempts INT NOT NULL DEFAULT 0,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 	locked_at TIMESTAMPTZ,
 	last_error TEXT,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 ALTER TABLE only notifications

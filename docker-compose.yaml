@@ -15,15 +15,15 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: notification_processor
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg_data:/var/lib/postgresql/data
     networks:
       - notification-processor-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_processor"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_processor_db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -90,12 +90,12 @@ services:
         condition: service_healthy
   
   # Service Discovery
-  consul:
-    image: hashicorp/consul:1.20
-    container_name: consul
-    command: agent -dev -ui -client=0.0.0.0
-    ports:
-      - "8500:8500"
+  # consul:
+  #   image: hashicorp/consul:1.20
+  #   container_name: consul
+  #   command: agent -dev -ui -client=0.0.0.0
+  #   ports:
+  #     - "8500:8500"
 
   # Notification Ingestion Service
   notification-ingestion-service:

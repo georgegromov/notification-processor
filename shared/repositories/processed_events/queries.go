@@ -5,6 +5,7 @@ import (
 	"shared/repositories/sqlutils"
 )
 
+//go:embed queries/*.sql
 var queryFiles embed.FS
 
 type queries struct {
@@ -14,7 +15,7 @@ type queries struct {
 
 func mustLoadQueries() *queries {
 	return &queries{
-		insertProcessedEvent: sqlutils.MustLoadQuery(queryFiles, "insert_processed_event.sql"),
-		insertNotification:   sqlutils.MustLoadQuery(queryFiles, "insert_notification.sql"),
+		insertProcessedEvent: sqlutils.MustLoadQuery(queryFiles, "queries/insert_processed_event.sql"),
+		insertNotification:   sqlutils.MustLoadQuery(queryFiles, "queries/insert_notification.sql"),
 	}
 }

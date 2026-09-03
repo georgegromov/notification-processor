@@ -71,7 +71,7 @@ func (p *Processor) Process(ctx context.Context, msg kgo.Message) (commit bool, 
 			return false, fmt.Errorf("%s: dlq after json error: %w", op, dlqErr)
 		}
 		p.logger.Error(op, slog.String("error", err.Error()))
-		return true, err
+		return true, nil
 	}
 
 	if err := p.validator.Validate(ctx, event); err != nil {
