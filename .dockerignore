@@ -1,0 +1,8 @@
+.git
+**/.env
+**/bin
+**/*_test.go
+solution.md
+task.md
+architecture.png
+scripts

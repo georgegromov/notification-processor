@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	dsn = "postgres://postgres:postgres@localhost:5432/notification_processor_db?sslmode=disable"
+	dsn = "postgres://postgres:postgres@postgres:5432/notification_processor_db?sslmode=disable"
 
 	breakerFailureThreshold = 5
 	breakerCooldown         = 10 * time.Second

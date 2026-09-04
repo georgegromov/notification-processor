@@ -15,7 +15,7 @@ const (
 	topic = "users-events"
 )
 
-var brokers = []string{"localhost:9092"}
+var brokers = []string{"kafka:29092"}
 
 type Event struct {
 	EventID   uuid.UUID      `json:"event_id"`

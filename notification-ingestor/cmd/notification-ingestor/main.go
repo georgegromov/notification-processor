@@ -17,14 +17,14 @@ import (
 )
 
 const (
-	dsn             = "postgres://postgres:postgres@localhost:5432/notification_processor_db?sslmode=disable"
+	dsn             = "postgres://postgres:postgres@postgres:5432/notification_processor_db?sslmode=disable"
 	consumerGroupID = "notification-ingestor"
 	eventsTopic     = "users-events"
 	dlqTopic        = "users-events-dlq"
 )
 
 var (
-	brokers = []string{"localhost:9092"}
+	brokers = []string{"kafka:29092"}
 )
 
 func main() {

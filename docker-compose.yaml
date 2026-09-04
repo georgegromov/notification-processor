@@ -2,18 +2,17 @@ name: notification-processor
 
 volumes:
   pg_data:
- 
+
 networks:
   notification-processor-network:
     driver: bridge
 
 services:
-  # PostgreSQL
   postgres:
     image: postgres:16-alpine
     container_name: postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -23,11 +22,11 @@ services:
     networks:
       - notification-processor-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_processor_db"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
-  # Zookeeper
+
   kafka-zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: kafka-zookeeper
@@ -45,7 +44,6 @@ services:
       retries: 10
       start_period: 30s
 
-  # Kafka
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
@@ -74,7 +72,6 @@ services:
       retries: 10
       start_period: 30s
 
-  # Kafka UI
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
@@ -88,18 +85,63 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-  
-  # Service Discovery
-  # consul:
-  #   image: hashicorp/consul:1.20
-  #   container_name: consul
-  #   command: agent -dev -ui -client=0.0.0.0
-  #   ports:
-  #     - "8500:8500"
 
-  # Notification Ingestion Service
+  migrate:
+    image: migrate/migrate:v4.18.2
+    container_name: migrate
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      [
+        "-path=/migrations",
+        "-database=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable",
+        "up",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - notification-processor-network
+    restart: "no"
+
   notification-ingestion-service:
+    build:
+      context: .
+      dockerfile: notification-ingestor/Dockerfile
+    container_name: notification-ingestor
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+    networks:
+      - notification-processor-network
+    restart: unless-stopped
 
-  # Notification Dispatch Service
   notification-dispatch-service:
-    
+    build:
+      context: .
+      dockerfile: notification-dispatcher/Dockerfile
+    container_name: notification-dispatcher
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - notification-processor-network
+    restart: unless-stopped
+
+  producer:
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
+    container_name: producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      notification-ingestion-service:
+        condition: service_started
+    networks:
+      - notification-processor-network
+    profiles:
+      - demo
+    restart: "no"

@@ -1,9 +1,9 @@
 -- Inbox: processed events (deduplication by event_id)
 CREATE TABLE IF NOT EXISTS processed_events (
 	event_id UUID PRIMARY KEY,
-	topic TEXT NOT NULL,
-	partition INT NOT NULL,
-	offset BIGINT NOT NULL,
+	kafka_topic TEXT NOT NULL,
+	kafka_partition INT NOT NULL,
+	kafka_offset BIGINT NOT NULL,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE only notifications
+ALTER TABLE notifications
 	ADD CONSTRAINT notifications_event_channel_unique UNIQUE (event_id, channel),
 	ADD CONSTRAINT notifications_status_check CHECK (status IN ('pending', 'processing', 'sent', 'failed')),
 	ADD CONSTRAINT notifications_channel_check CHECK (channel IN ('email', 'push', 'sms'));
